@@ -1,0 +1,177 @@
+---
+title: "project"
+author: "group 3-AA"
+date: "2025-05-31"
+output: pdf_document
+---
+
+## data clean
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+df_atlas <- read_delim("AtlasPlusTableData.csv")
+df_ps <- read_delim("PS-Syphilis-Rates-Women-15-44-Years-by-County-US-2023.csv")
+```
+
+```{r}
+df_atlas <- df_atlas %>%
+  mutate(across(where(is.character), ~na_if(., "Data not available"))) %>%
+  mutate(across(where(is.character), ~na_if(., "Data suppressed"))) %>%
+  drop_na()
+dim(df_atlas)
+```
+
+```{r}
+df_ps <- df_ps %>% 
+  mutate(across(where(is.character), ~na_if(.,"Unavailable/suppressed")))%>%
+  drop_na()
+dim(df_ps)
+```
+
+```{r}
+df_atlas_merge <- df_atlas %>%
+  select(-FIPS,-Cases) %>%
+  rename(
+    State = Geography, 
+    Rate = 'Rate per 100000'
+  )
+head(df_atlas_merge)
+
+df_ps_merge <- df_ps %>%
+  select(-'State FIPS',- 'County FIPS',-'Age Range',-'Sex',-'Rate Category')%>%
+  rename(
+    State = State,
+    County = County,
+    Indicator = STI,
+  )
+head(df_ps_merge)
+```
+
+
+## data combine
+
+```{r}
+df_atlas_merge <- df_atlas_merge %>%
+  mutate(
+    County = NA_character_,
+    Rate = as.numeric(gsub(",", "", Rate)),
+    Year = as.numeric(stringr::str_extract(Year, "\\d{4}"))
+  ) %>%
+  select(Indicator, Year, State, County, Rate)
+
+df_ps_merge <- df_ps_merge %>%
+  mutate(
+    Rate = as.numeric(gsub(",", "", Rate)),
+    Year = as.numeric(Year)
+  ) %>%
+  select(Indicator, Year, State, County, Rate)
+
+df_combined <- bind_rows(df_atlas_merge, df_ps_merge)
+
+dim(df_combined)
+```
+
+## P1    How have syphilis rates changed across different states from 2000 to 2023? 
+
+```{r}
+df_syphilis <- df_atlas %>%
+  filter(str_detect(Indicator, "Syphilis")) %>%
+  mutate(
+    rate = as.numeric(str_replace(`Rate per 100000`, ",", "")),
+    Year = as.numeric(str_extract(Year, "\\d{4}"))
+  ) %>%
+  group_by(Year, Indicator) %>%
+  summarise(avg_rate = mean(rate, na.rm = TRUE), .groups = "drop")
+
+ggplot(df_syphilis, aes(x = Year, y = avg_rate, color = Indicator)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Long-Term Trends of Syphilis in the U.S. (2000–2023)",
+    x = "Year",
+    y = "Average Rate per 100,000 People",
+    color = "Syphilis Period"
+  ) + 
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+# ggsave("syphilis.png", width = 10, height = 6, dpi = 300)
+```
+
+
+## P2 How does syphilis compare to other STIs (gonorrhea and chlamydia) in terms of trends and severity from 2000 to 2023?
+
+```{r}
+df_subset <- df_combined %>%
+  filter(Year %in% c(2018, 2022), is.na(County)) %>%
+  filter(Indicator %in% c("Primary and Secondary Syphilis"))
+
+ggplot(df_subset, aes(x = Rate, y = fct_reorder(State, Rate), fill = Indicator)) +
+  geom_col() +
+  facet_wrap(~Year) +
+  labs(title = "STI Rates by State in 2018 and 2022",
+       x = "Rate per 100,000", y = "State") +
+  scale_fill_manual(values = c("Primary and Secondary Syphilis" = "limegreen"))+
+  theme(axis.text.y = element_text(size = 4))
+# ggsave("state.png", width = 10, height = 6, dpi = 300)
+```
+
+```{r}
+df_national <- df_combined %>%
+  filter(is.na(County)) %>%
+  filter(Indicator %in% c("Chlamydia", "Gonorrhea", "Primary and Secondary Syphilis")) %>%
+  group_by(Year, Indicator) %>%
+  summarise(avg_rate = mean(Rate, na.rm = TRUE), .groups = "drop")
+
+ggplot(df_national, aes(x = Year, y = avg_rate, color = Indicator)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "National Average STI Rates Over Time (2000–2023)",
+    y = "Average Rate per 100,000", x = "Year"
+  ) +
+  scale_color_manual(values = c(
+    "Chlamydia" = "red",
+    "Gonorrhea" = "blue",
+    "Primary and Secondary Syphilis" = "limegreen"
+  ))
+# ggsave("all.png", width = 10, height = 6, dpi = 300)
+```
+
+## P3: Do states with historically rising syphilis trends also exhibit high county-level infection rates among women aged 15–44 in 2023?
+
+```{r}
+df_syphilis <- df_combined %>%
+  filter(Indicator == "Primary and Secondary Syphilis", is.na(County))
+
+ggplot(df_syphilis, aes(x = Year, y = Rate, color = State)) +
+  geom_line() +
+  labs(title = "Primary and Secondary Syphilis Rates by State Over Time",
+       y = "Rate per 100,000")
+# ggsave("primary and secondary.png", width = 10, height = 6, dpi = 300)
+```
+
+
+## P4 Which states and regions should be prioritized for future funding and interventions?
+
+```{r}
+df_sd_county <- df_combined %>%
+  filter(
+    State == "South Dakota",
+    Indicator == "Primary and secondary syphilis",
+    !is.na(County)
+  )
+
+ggplot(df_sd_county, aes(x = Rate, y = fct_reorder(County, Rate))) +
+  geom_col(fill = "orange") +
+  labs(
+    title = "Primary and Secondary Syphilis Rates by County in South Dakota (2023)",
+    x = "Rate per 100,000",
+    y = "County"
+  ) +
+  theme(axis.text.y = element_text(size = 4))
+# ggsave("county.png", width = 10, height = 6, dpi = 300)
+```
